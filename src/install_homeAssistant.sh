@@ -54,13 +54,13 @@ echo "操作系统信息: $OS_INFO"
 RESTART_STEP=$1
 
 # 如果没有传入参数，提示用户输入
-if [ -z "$RESTART_STEP " ]; then
+if [ -z "$RESTART_STEP" ]; then
     echo "请提供一个参数：0（第一次安装），1（第一次重启后），2（第二次重启后）"
     exit 1
 fi
 
 # 日志文件名
-LOG_FILE="$LOG_DIR/${TIMESTAMP}_stage_${RESTART_STEP }.log"
+LOG_FILE="$LOG_DIR/${TIMESTAMP}_stage_${RESTART_STEP}.log"
 
 # 重定向所有输出到日志文件
 exec > >(tee -a "$LOG_FILE") 2>&1
