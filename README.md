@@ -45,7 +45,7 @@
 1. **Download the script**:
 
    ```bash
-   wget https://raw.githubusercontent.com/CaixyPromise/rk3318-homeassistant-installer/main/install.sh -O install_homeAssistant.sh
+   wget https://raw.githubusercontent.com/CaixyPromise/rk3318-homeassistant-installer/main/src/install_homeAssistant.sh -O install_homeAssistant.sh
    chmod +x install_homeAssistant.sh
    ```
 

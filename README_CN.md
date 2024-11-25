@@ -39,7 +39,7 @@
 1. **下载脚本**：
 
    ```bash
-   wget https://raw.githubusercontent.com/CaixyPromise/rk3318-homeassistant-installer/main/install.sh -O install_homeAssistant.sh
+   wget https://raw.githubusercontent.com/CaixyPromise/rk3318-homeassistant-installer/main/src/install_homeAssistant.sh -O install_homeAssistant.sh
    chmod +x install_homeAssistant.sh
    ```
 
@@ -77,7 +77,7 @@
      http://<设备IP>:8123
      ```
 
-   将 `<设备IP>` 替换为的设备局域网 IP。
+   将 `<设备IP>` 替换为设备局域网 IP。
 
 ------
 
