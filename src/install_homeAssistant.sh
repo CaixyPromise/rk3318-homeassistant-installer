@@ -89,6 +89,92 @@ download_with_retry() {
     read -n 1 -s -r
     download_with_retry $URL $DEST  # 递归重试，直到成功
 }
+# 最大重试次数
+MAX_RETRIES=5
+
+# 包检查和安装函数
+check_and_install_packages() {
+    local retry_count=$1  # 当前重试次数
+    local packages=("$@") # 传入的所有软件包列表（包含重试次数参数，需处理）
+
+    # 移除第一个参数（重试次数）
+    packages=("${packages[@]:1}")
+
+    # 检查未安装的软件包
+    local missing_packages=()
+    for package in "${packages[@]}"; do
+        if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+            echo "$package 未安装或安装失败"
+            missing_packages+=("$package")
+        else
+            echo "$package 已安装"
+        fi
+    done
+
+    # 如果有未安装的软件包
+    if [ ${#missing_packages[@]} -ne 0 ]; then
+        echo "需要重新安装以下未安装的软件包: ${missing_packages[*]}"
+
+        # 更新包索引并安装
+        sudo apt-get update
+        sudo apt-get install -y "${missing_packages[@]}"
+
+        # 检查修复依赖问题
+        sudo apt-get --fix-broken install -y
+
+        # 递归检查和安装
+        if [ $retry_count -lt $MAX_RETRIES ]; then
+            echo "重新检查安装状态，当前重试次数：$((retry_count + 1))"
+            check_and_install_packages $((retry_count + 1)) "${packages[@]}"
+        else
+            echo "超出最大重试次数 ($MAX_RETRIES)。退出脚本。"
+            echo "需要重新安装以下未安装的软件包: ${missing_packages[*]}"
+            exit 1
+        fi
+    else
+        echo "所有软件包都已成功安装，无需进一步操作。"
+    fi
+}
+
+# 容器检查和启动函数
+check_and_start_containers() {
+    local retry_count=$1  # 当前重试次数
+    local containers=("homeassistant")  # 待检查的容器列表
+
+    echo "检查容器启动状态（第 $((retry_count + 1)) 次尝试）..."
+
+    # 标记是否所有容器都启动
+    local all_started=true
+
+    for container in "${containers[@]}"; do
+        if docker ps --filter "name=$container" --format '{{.Names}}' | grep -q "$container"; then
+            echo "$container 已启动。"
+        else
+            echo "$container 尚未启动。"
+            all_started=false
+        fi
+    done
+
+    # 如果所有容器都启动，结束检查
+    if $all_started; then
+        echo "所有容器已成功启动！"
+        return 0
+    fi
+
+    # 如果未成功启动，检查重试次数
+    if [ $retry_count -ge $MAX_RETRIES ]; then
+        echo "已达到最大重试次数 ($MAX_RETRIES)，退出脚本。"
+        exit 1
+    fi
+
+    # 尝试重新启动 Docker Compose 并递归调用检查
+    echo "尝试重新启动 Docker Compose..."
+    docker compose up -d
+
+    # 延迟 10 秒后重新检查
+    sleep 10
+    check_and_start_containers $((retry_count + 1))
+}
 
 # 根据传入的步骤执行不同的代码块
 case "$RESTART_STEP" in
@@ -117,7 +203,7 @@ EOF
         fi
 
         # 安装必要软件包
-        sudo apt install -y apparmor-utils jq software-properties-common apt-transport-https avahi-daemon ca-certificates curl dbus socat
+        sudo apt install -y apparmor-utils jq software-properties-common apt-transport-https avahi-daemon ca-certificates curl dbus socat bluez
         echo "apparmor=1 security=apparmor" | sudo tee -a /boot/cmdline.txt
         sudo apt install -y libtalloc2 libwbclient0
 
@@ -160,6 +246,8 @@ EOF
 
         # 启动 Docker 容器
         docker compose up -d
+        # 调用容器检查和启动函数
+        check_and_start_containers 0
 
         # 安装 HACS
         cd /home-assistant-config
@@ -179,12 +267,43 @@ EOF
         # 第一次检查
         sudo apt --fix-broken install -y
 
+        # homeassistant-supervised必备的软件包列表
+        PACKAGES=(
+            "network-manager"
+            "apparmor-utils"
+            "jq"
+            "software-properties-common"
+            "apt-transport-https"
+            "avahi-daemon"
+            "ca-certificates"
+            "curl"
+            "dbus"
+            "socat"
+            "bluez"
+            "libtalloc2"
+            "libwbclient0"
+            "apparmor"
+            "cifs-utils"
+            "libglib2.0-bin"
+            "lsb-release"
+            "nfs-common"
+            "systemd-journal-remote"
+            "udisks2"
+            "pulseaudio"
+        )
+
+        # 调用函数，0-当前调用次数
+        check_and_install_packages 0 "${PACKAGES[@]}"
+
+        # 第二次检查
+        sudo apt-get --fix-broken install -y
 
         # 安装 Home Assistant Supervised
         download_with_retry $SUPERVISED_REPOSITORY "homeassistant-supervised.deb"
         sudo dpkg -i homeassistant-supervised.deb
-        # 第二次检查
+        # 第三次检查
         sudo apt --fix-broken install -y
+        sudo systemctl enable hassio-supervisor
 
         # 重启系统
         echo "第二阶段完成：请将系统重启，进入第三阶段安装..."
@@ -195,27 +314,84 @@ EOF
         # 第二次重启后
         echo "正在执行第二次重启后的操作..."
 
-        # 监控 Home Assistant 容器的启动情况
+        # 定义需要监控的容器列表
         containers=("homeassistant" "hassio_multicast" "hassio_observer" "hassio_audio" "hassio_dns" "hassio_cli" "hassio_supervisor")
-        echo "正在监控Docker容器启动状况，等待所有容器启动完成"
+        echo "正在监控Docker容器启动状况，等待所有容器启动完成..."
+
+        # 最大监控时间（单位：秒）
+        MAX_MONITOR_TIME=1200  # 20分钟
+        start_time=$(date +%s)
+
         while true; do
             echo -e "======== $(date) ========\n"
             all_started=true
+            not_started=()
+
+            # 检查容器状态
             for container in "${containers[@]}"; do
                 if docker ps --filter "name=$container" --format '{{.Names}}' | grep -q "$container"; then
                     echo "$container is running."
                 else
                     echo "$container is not started yet."
                     all_started=false
+                    not_started+=("$container")
                 fi
             done
 
+            # 如果所有容器启动成功，退出循环
             if $all_started; then
-                echo "All containers are started."
+                echo "所有容器已启动！"
                 break
             fi
+
+            # 检查是否超时
+            current_time=$(date +%s)
+            elapsed_time=$((current_time - start_time))
+
+            if [ $elapsed_time -ge $MAX_MONITOR_TIME ]; then
+                echo "监控已超时（超过20分钟）。以下容器尚未启动："
+                for container in "${not_started[@]}"; do
+                    echo "- $container"
+                done
+
+                # 提示用户选择是否继续监控
+                while true; do
+                    read -p "是否需要继续监控20分钟？(Y(y)/N(n)): " continue_monitoring
+                    case $continue_monitoring in
+                        [Yy]* )
+                            echo "继续监控容器状态..."
+                            start_time=$(date +%s)  # 重置监控开始时间
+                            break
+                            ;;
+                        [Nn]* )
+                            while true; do
+                                read -p "是否需要继续下一步操作？(Y(y)/N(n)): " proceed_next
+                                case $proceed_next in
+                                    [Yy]* )
+                                        echo "继续下一步操作..."
+                                        break 2  # 跳出内外层循环，进入下一步
+                                        ;;
+                                    [Nn]* )
+                                        echo "退出脚本。"
+                                        exit 0
+                                        ;;
+                                    * )
+                                        echo "请输入有效选项：Y(y) 或 N(n)。"
+                                        ;;
+                                esac
+                            done
+                            ;;
+                        * )
+                            echo "请输入有效选项：Y(y) 或 N(n)。"
+                            ;;
+                    esac
+                done
+            fi
+
+            # 等待5秒后继续检查
             sleep 5
         done
+
 
         # 安装 HACS 配置项
         echo "现在可以选择是否先初始化 Home Assistant 或直接安装 HACS 加载项。"
@@ -247,7 +423,23 @@ EOF
 
         echo "HACS 安装完成！快去$LOCAL_IP:8123 使用Home Assistant吧! 重启Home Assistant即可添加HACS加载项。无需重启系统"
         ;;
+    3) 
+        echo "正在归档日志目录中的所有日志文件..."
 
+        # 确保日志目录存在
+        if [ ! -d "$LOG_DIR" ]; then
+            echo "日志目录不存在：$LOG_DIR"
+            exit 1
+        fi
+
+        # 打包日志文件
+        ARCHIVE_NAME="logs_${TIMESTAMP}.tar.gz"
+        tar -czvf "$ARCHIVE_NAME" -C "$LOG_DIR" .
+
+        # 输出日志包存放位置
+        echo "日志已成功打包。"
+        echo "日志存放位置：$(pwd)/$ARCHIVE_NAME"
+        ;;
     *)
         # 处理无效输入
         echo "无效的参数，请传入 0、1 或 2 来指定操作步骤。"

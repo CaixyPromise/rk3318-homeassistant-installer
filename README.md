@@ -85,6 +85,14 @@
 
    Replace `<device-ip>` with your device's local network IP.
 
+4. **Log archive**:
+
+   - Use the below command to archive the log.(runtime output)
+
+     ```shell
+     sudo ./install_homeAssistant.sh 3
+     ```
+
 ------
 
 ### Logs and Debugging
