@@ -37,7 +37,7 @@ fi
 echo "System detected as Debian Bullseye. Proceeding with the installation..."
 HACS_REPOSITORY=https://github.com/hacs/integration/releases/download/2.0.1/hacs.zip
 OS_AGENT_REPOSITORY=https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_aarch64.deb
-SUPERVISED_REPOSITORY=https://github.com/home-assistant/supervised-installer/releases/latest/download/homeassistant-supervised.deb
+SUPERVISED_REPOSITORY=https://github.com/home-assistant/supervised-installer/releases/download/1.8.0/homeassistant-supervised.deb
 
 # 创建日志目录
 LOG_DIR="$(pwd)/logs"
@@ -217,6 +217,12 @@ EOF
         # 启用并启动 systemd-resolved 服务
         sudo systemctl enable systemd-resolved
         sudo systemctl start systemd-resolved
+        if ! systemctl is-active --quiet systemd-resolved; then
+            echo "systemd-resolved 服务启动失败，退出脚本运行, 考虑重新当前阶段的脚本? 当前阶段为: $RESTART_STEP"
+            exit 1
+        else
+            echo "systemd-resolved 服务启动成功"
+        fi
 
         # 重启
         echo "第一阶段完成：请将系统重启，以进入第二阶段安装..."
