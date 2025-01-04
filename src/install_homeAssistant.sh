@@ -19,11 +19,11 @@ echo "rk3318-homeassistant-installer"
 echo "Author: CAIXYPROMISE"
 echo "License: MIT"
 echo "GitHub repository: https://github.com/CaixyPromise/rk3318-homeassistant-installer"
-echo "Version: 1.2"
-echo "Last modified: 2024-11-24"
+echo "Version: 1.3"
+echo "Last modified: 2025-01-05"
 echo "Supported OS: Debian Bullseye (11)"
 echo "=========================================="
-echo "💡 Tip: Star this project on GitHub to get updates and new features!"
+echo "💡 Tip: ⭐Star this project on GitHub to get updates and new features!"
 echo "👉 Visit: https://github.com/CaixyPromise/rk3318-homeassistant-installer"
 echo "=========================================="
 
@@ -397,7 +397,26 @@ EOF
             # 等待5秒后继续检查
             sleep 5
         done
+        # 解决Home Assistant Supervisor 的 unhealthy检查错误
+        CONTAINER_NAME="hassio_cli"
 
+        if sudo docker ps --filter "name=${CONTAINER_NAME}" --filter "status=running" --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+            # 如果容器正在运行，执行忽略健康检查的命令
+            echo "容器 ${CONTAINER_NAME} 正在运行，正在执行忽略健康检查的命令..."
+            sudo docker exec ${CONTAINER_NAME} ha jobs options --ignore-conditions healthy
+            if [ $? -eq 0 ]; then
+                echo "命令执行成功。"
+            else
+                echo "命令执行失败，请检查日志。"
+            fi
+        else
+            # 如果容器未启动，提示用户
+            echo "容器 ${CONTAINER_NAME} 未启动，无法修复健康检查问题。"
+            echo "请先启动容器 ${CONTAINER_NAME} 后再执行以下命令："
+            echo
+            echo "sudo docker exec ${CONTAINER_NAME} ha jobs options --ignore-conditions healthy"
+            echo
+        fi
 
         # 安装 HACS 配置项
         echo "现在可以选择是否先初始化 Home Assistant 或直接安装 HACS 加载项。"
@@ -409,7 +428,7 @@ EOF
         # 检查是否能成功获取到IP地址
         if [ -z "$LOCAL_IP" ]; then
             echo "无法获取到设备的局域网IP地址。"
-            echo "请手动访问设备所在局域网的 8123 端口进行初始化。例如：http://<device-ip>:8123"
+            echo "请手动访问设备所在局域网的 8123（Home Assistant默认)端口进行初始化。例如：http://<device-ip>:8123"
         else
             echo "设备的局域网IP地址为: $LOCAL_IP"
             echo "请在浏览器中访问 http://$LOCAL_IP:8123 （这个地址可能是参考的）进行 Home Assistant 的初始化。"

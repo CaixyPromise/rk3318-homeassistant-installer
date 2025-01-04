@@ -44,6 +44,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ------
 
+## [v1.2] - 2024-11-24
+
+### Improved
+
+- Add new package installation integrity check
+
+------
+
+
+
+## [v1.3] - 2025-01-05
+
+### Added
+
+- After the installation is complete, add [the option to turn off security checking for Home Assistant Supervisor], 
+
+  > Otherwise you will get a HACS alter that the system is unhealthy.
+
+------
+
+
+
 ## Future Plans
 
 - Add support for other Debian versions.
