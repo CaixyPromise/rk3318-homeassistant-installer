@@ -2,7 +2,7 @@
 # ============================================================
 # Project: rk3318-homeassistant-installer
 # Author: CAIXYPROMISE
-# Version: 1.2
+# Version: 1.3
 # Last Modified: 2024-11-24
 # GitHub Repository: https://github.com/CaixyPromise/rk3318-homeassistant-installer
 # 
