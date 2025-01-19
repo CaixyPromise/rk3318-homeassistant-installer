@@ -483,6 +483,12 @@ case "$RESTART_STEP" in
         echo "deb http://deb.debian.org/debian/ ${OS_CODENAME} main contrib non-free" | sudo tee /etc/apt/sources.list
         echo "deb http://deb.debian.org/debian/ ${OS_CODENAME}-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
         echo "deb http://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
+
+        # 添加清华大学开源软件镜像站的源
+        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME} main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-backports main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security ${OS_CODENAME}-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
         sudo apt update
 
         # 安装网络管理器
