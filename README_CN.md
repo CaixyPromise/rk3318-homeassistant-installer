@@ -71,33 +71,47 @@ chmod +x install_homeAssistant.sh
    chmod +x install_homeAssistant.sh
    ```
 
-2. **执行安装阶段**： 安装分为以下三阶段。每个阶段完成后需要 **重启系统** 并继续下一阶段。
+### 执行代码
 
-   - **阶段一：初始安装**：
+**执行安装阶段**：确保你已经下载完成代码并进入代码目录：
 
-     ```bash
-     sudo ./install_homeAssistant.sh 0
-     ```
+```sh
+ls
+```
 
-     执行系统基础配置和依赖安装。根据提示完成操作并重启。
+**:warning: 注意：你必须看到以下文字才能开始安装。**
 
-   - **阶段二：第一次重启后**：
+```
+./install_homeAssistant.sh
+```
 
-     ```bash
-     sudo ./install_homeAssistant.sh 1
-     ```
+安装分为以下三阶段。每个阶段完成后需要 **重启系统** 并继续下一阶段。
 
-     安装 Docker 配置和 HACS，完成后重启。
+- **阶段一：初始安装**：
 
-   - **阶段三：第二次重启后**：
+  ```bash
+  sudo ./install_homeAssistant.sh 0
+  ```
 
-     ```bash
-     sudo ./install_homeAssistant.sh 2
-     ```
+  执行系统基础配置和依赖安装。根据提示完成操作并重启。
 
-     启动 Home Assistant 容器并完成配置。
+- **阶段二：第一次重启后**：
 
-3. **访问 Home Assistant**：
+  ```bash
+  sudo ./install_homeAssistant.sh 1
+  ```
+
+  安装 Docker 配置和 HACS，完成后重启。
+
+- **阶段三：第二次重启后**：
+
+  ```bash
+  sudo ./install_homeAssistant.sh 2
+  ```
+
+  启动 Home Assistant 容器并完成配置。
+  
+- **访问 Home Assistant**：
 
    - 打开浏览器并访问：
 
@@ -107,7 +121,7 @@ chmod +x install_homeAssistant.sh
 
    将 `<设备IP>` 替换为设备局域网 IP。
 
-4. 日志打包
+- 日志打包
 
    - 使用以下命令输出打包（已经启动过脚本且日志目录存在）
 

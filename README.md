@@ -73,33 +73,43 @@ If Git is not installed, run the following step 1 and repeat.
    chmod +x install_homeAssistant.sh
    ```
 
-2. **Execute installation stages**: Follow the staged installation steps below. After each stage, **reboot your system** and continue with the next step.
+### Execute the Script
 
-   - **Stage 1: Initial Installation**:
+**Execute installation stages**: **After the script has been downloaded and you are in the download directory**：
 
-     ```bash
-     sudo ./install_homeAssistant.sh 0
-     ```
+```sh
+ls
+```
 
-     Installs basic system settings and dependencies. Follow the prompts to reboot.
+**:warning: CAUTION: You are required to see the following text to start the installation.**
 
-   - **Stage 2: After First Reboot**:
+Follow the staged installation steps below. After each stage, **reboot your system** and continue with the next step.
 
-     ```bash
-     sudo ./install_homeAssistant.sh 1
-     ```
+- **Stage 1: Initial Installation**:
 
-     Sets up Docker configuration and HACS. Reboot when prompted.
+  ```bash
+  sudo ./install_homeAssistant.sh 0
+  ```
 
-   - **Stage 3: Final Installation**:
+  Installs basic system settings and dependencies. Follow the prompts to reboot.
 
-     ```bash
-     sudo ./install_homeAssistant.sh 2
-     ```
+- **Stage 2: After First Reboot**:
 
-     Starts Home Assistant containers and finalizes the setup.
+  ```bash
+  sudo ./install_homeAssistant.sh 1
+  ```
 
-3. **Access Home Assistant**:
+  Sets up Docker configuration and HACS. Reboot when prompted.
+
+- **Stage 3: Final Installation**:
+
+  ```bash
+  sudo ./install_homeAssistant.sh 2
+  ```
+
+  Starts Home Assistant containers and finalizes the setup.
+  
+- **Access Home Assistant**:
 
    - Open your browser and visit:
 
@@ -109,7 +119,7 @@ If Git is not installed, run the following step 1 and repeat.
 
    Replace `<device-ip>` with your device's local network IP.
 
-4. **Log archive**:
+- **Log archive**:
 
    - Use the below command to archive the log.(runtime output)
 
