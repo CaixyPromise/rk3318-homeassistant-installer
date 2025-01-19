@@ -468,6 +468,29 @@ install_deb_with_check() {
     return 0
 }
 
+check_packages() {
+    local packages=("$@")
+    local missing_packages=()
+
+    for package in "${packages[@]}"; do
+        if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+            echo "⚠️  $package 未安装或安装失败"
+            missing_packages+=("$package")
+        else
+            echo "✅ $package 已安装"
+        fi
+    done
+
+    # 返回检查结果
+    if [ ${#missing_packages[@]} -ne 0 ]; then
+        echo "❌ 以下软件包未成功安装: ${missing_packages[*]}"
+        return 1
+    else
+        echo "✅ 所有软件包已安装成功"
+        return 0
+    fi
+}
+
 # 安装并检查软件包
 install_and_check() {
     local packages=("$@")
