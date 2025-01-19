@@ -468,6 +468,49 @@ install_deb_with_check() {
     return 0
 }
 
+# 安装并检查软件包
+install_and_check() {
+    local packages=("$@")
+    
+    echo "📦 开始安装软件包..."
+    sudo apt-get update
+    sudo apt-get install -y "${packages[@]}"
+    
+    echo "🔍 检查软件包安装状态..."
+    check_packages "${packages[@]}"
+    
+    if [ $? -ne 0 ]; then
+        echo "⚠️  检测到部分软件包未正确安装，尝试重新安装..."
+        sudo apt-get install -y "${packages[@]}"
+        
+        echo "🔍 再次检查软件包安装状态..."
+        check_packages "${packages[@]}"
+        
+        if [ $? -ne 0 ]; then
+            echo "❌ 部分软件包仍未正确安装，请手动检查以下软件包:"
+            check_packages "${packages[@]}"
+            exit 1
+        fi
+    fi
+}
+
+# 获取系统发行版本代号
+OS_CODENAME=$(lsb_release -sc)
+
+# 检查并添加源的函数
+add_source_if_not_exists() {
+  local SOURCE="$1"
+  local FILE="/etc/apt/sources.list"
+
+  # 检查源是否已存在
+  if ! grep -Fq "$SOURCE" "$FILE"; then
+    echo "$SOURCE" | sudo tee -a "$FILE"
+    echo "已添加源: $SOURCE"
+  else
+    echo "源已存在: $SOURCE"
+  fi
+}
+
 
 # 根据传入的步骤执行不同的代码块
 case "$RESTART_STEP" in
@@ -480,15 +523,16 @@ case "$RESTART_STEP" in
         OS_CODENAME=$(lsb_release -sc)
 
         # 添加官方源
-        echo "deb http://deb.debian.org/debian/ ${OS_CODENAME} main contrib non-free" | sudo tee /etc/apt/sources.list
-        echo "deb http://deb.debian.org/debian/ ${OS_CODENAME}-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb http://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        add_source_if_not_exists "deb http://deb.debian.org/debian/ ${OS_CODENAME} main contrib non-free"
+        add_source_if_not_exists "deb http://deb.debian.org/debian/ ${OS_CODENAME}-updates main contrib non-free"
+        add_source_if_not_exists "deb http://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free"
 
         # 添加清华大学开源软件镜像站的源
-        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME} main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-backports main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security ${OS_CODENAME}-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME} main contrib non-free"
+        add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-updates main contrib non-free"
+        add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-backports main contrib non-free"
+        add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security ${OS_CODENAME}-security main contrib non-free"
+
         sudo apt update
 
         # 安装网络管理器
@@ -506,12 +550,44 @@ EOF
         fi
 
         # 安装必要软件包
-        sudo apt install -y apparmor-utils jq software-properties-common apt-transport-https avahi-daemon ca-certificates curl dbus socat bluez 
+        # 必要的软件包列表
+        NECESSARY_PACKAGES=(
+            "apparmor-utils"
+            "jq"
+            "software-properties-common"
+            "apt-transport-https"
+            "avahi-daemon"
+            "ca-certificates"
+            "curl"
+            "dbus"
+            "socat"
+            "bluez"
+            "libtalloc2"
+            "libwbclient0"
+        )
+        install_and_check "${NECESSARY_PACKAGES[@]}"
+        
         echo "apparmor=1 security=apparmor" | sudo tee -a /boot/cmdline.txt
-        sudo apt install -y libtalloc2 libwbclient0
+        # sudo apt install -y libtalloc2 libwbclient0
 
         # 安装其他必需包
-        sudo apt install -y apparmor cifs-utils curl dbus jq libglib2.0-bin lsb-release network-manager nfs-common systemd-journal-remote udisks2 wget systemd-resolved
+        ADDITIONAL_PACKAGES=(
+            "apparmor"
+            "cifs-utils"
+            "curl"
+            "dbus"
+            "jq"
+            "libglib2.0-bin"
+            "lsb-release"
+            "network-manager"
+            "nfs-common"
+            "systemd-journal-remote"
+            "udisks2"
+            "wget"
+            # "systemd-resolved"
+        )
+        install_and_check "${ADDITIONAL_PACKAGES[@]}"
+        sudo apt-get --fix-broken install -y
 
         # 下载并安装 OS Agent
         os_agent_deb="$HA_DOWNLOAD_DIR/os-agent_1.3.0_linux.deb"
@@ -527,7 +603,11 @@ EOF
         sudo systemctl start systemd-resolved
         if ! systemctl is-active --quiet systemd-resolved; then
             echo "尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
-            sudo apt install -y systemd-resolved
+            FIX_PACKAGE=(
+                "systemd-resolved"
+            )
+            install_and_check "${FIX_PACKAGE}"
+            # sudo apt install -y systemd-resolved
             sudo apt-get --fix-broken install -y
             # 再次检查服务是否启动成功
             if ! systemctl is-active --quiet systemd-resolved; then
