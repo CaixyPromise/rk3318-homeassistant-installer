@@ -1,47 +1,152 @@
 #!/bin/bash
 # ============================================================
 # Project: rk3318-homeassistant-installer
-# Author: CAIXYPROMISE
-# Version: 1.3
-# Last Modified: 2024-11-24
+# Author: [CAIXYPROMISE](https://github.com/CaixyPromise)
+# Version: 1.4
+# Last Modified: 2025-01-19
 # GitHub Repository: https://github.com/CaixyPromise/rk3318-homeassistant-installer
 # 
-# Copyright (c) 2024 CAIXYPROMISE
+# Copyright (c) 2025 CAIXYPROMISE
 #
 # This script is licensed under the MIT License. 
 # You may obtain a copy of the License at https://opensource.org/licenses/MIT
 # Supported Operating Systems:
-# - Debian Bullseye (11)
-# A
+# - Debian Bullseye (11) - Stable and Recommended ⭐
+# - Debian Bookworm (12) - Beta, under testing and bug fixes 🔨
+# Supported Architectures:
+# - ARM (aarch64, armv7, armv5) - Stable and Recommended ⭐
+# - AMD64 (x86_64) - Beta, under testing, potential issues with downloading or installing architecture-specific .deb packages
 # ============================================================
 echo "=========================================="
 echo "rk3318-homeassistant-installer"
-echo "Author: CAIXYPROMISE"
+echo "Author: [CAIXYPROMISE](https://github.com/CaixyPromise)"
 echo "License: MIT"
 echo "GitHub repository: https://github.com/CaixyPromise/rk3318-homeassistant-installer"
-echo "Version: 1.3"
-echo "Last modified: 2025-01-05"
-echo "Supported OS: Debian Bullseye (11)"
+echo "Version: 1.4"
+echo "Last modified: 2025-01-19"
+echo "Supported OS: "
+echo "  - Debian Bullseye (11) - Stable and Recommended ⭐"
+echo "  - Debian Bookworm (12) - Beta, under testing and bug fixes 🔨"
+echo "Supported Architectures: "
+echo "  - ARM (aarch64, armv7, armv5) - Stable and Recommended ⭐"
+echo "  - AMD64 (x86_64) - Beta, under testing, potential issues with downloading or installing .deb packages"
 echo "=========================================="
 echo "💡 Tip: ⭐Star this project on GitHub to get updates and new features!"
 echo "👉 Visit: https://github.com/CaixyPromise/rk3318-homeassistant-installer"
 echo "=========================================="
 
-OS_CODENAME=$(lsb_release -sc)  
-if [[ "$OS_CODENAME" != "bullseye" ]]; then
-    echo "Error: This script is currently designed for Debian Bullseye systems only."
-    echo "Your system is detected as: $OS_CODENAME"
-    echo "Exiting the script."
+if ! sudo -v > /dev/null 2>&1; then
+    echo "❌ 脚本需要 sudo 权限，请确保用户具有 sudo 权限后重新运行。"
     exit 1
 fi
-echo "System detected as Debian Bullseye. Proceeding with the installation..."
+
+# 定义全局下载目录
+INITIAL_DIR=$(pwd)
+HA_DOWNLOAD_DIR="$INITIAL_DIR/ha_downloads"
+mkdir -p "$HA_DOWNLOAD_DIR" || {
+    echo "❌ 无法创建下载目录：$HA_DOWNLOAD_DIR"
+    exit 1
+}
+
+
+check_network() {
+    echo "🔍 正在检查网络连接..."
+    if ! command -v ping > /dev/null; then
+        echo "🚨 ping 工具不可用，跳过网络检查"
+        return # 直接
+    fi
+
+    local network_ok=false
+    for target in "baidu.com" "google.com" "bing.com"; do
+        if ping -c 1 -W 2 "$target" > /dev/null 2>&1; then
+            echo "✅ 网络连接正常：$target"
+            network_ok=true
+            break
+        fi
+    done
+    if ! $network_ok; then
+        echo "❌ 无法连接到任何网络，请检查您的网络连接。"
+        exit 1
+    fi
+}
+
+
+# 检查网络
+check_network
+prompt_yes_no() {
+    local prompt_message=$1
+    while true; do
+        read -p "$prompt_message (Yes(Y)/No(N)): " user_input
+        user_input=$(echo "$user_input" | tr '[:upper:]' '[:lower:]' | xargs)
+        if [[ -z "$user_input" ]]; then
+            echo "❌ 输入不能为空，请输入 Yes(Y) 或 No(N)。"
+            continue
+        fi
+        case "$user_input" in
+            y|yes) return 0 ;;  # 用户选择 Yes，返回 true
+            n|no) return 1 ;;   # 用户选择 No，返回 false
+            *) echo "❌ 无效输入，请输入 Yes(Y) 或 No(N)。" ;;
+        esac
+    done
+}
+
+# 检查系统发行版本
+if [[ "$(uname -s)" != "Linux" || "$(lsb_release -si)" != "Debian" ]]; then
+    echo "❌ 本脚本目前仅支持运行在 Debian 系统上，当前系统不兼容。"
+    exit 1
+fi
+
+# 检测系统版本
+OS_CODENAME=$(lsb_release -sc)
+if [[ "$OS_CODENAME" != "bullseye" ]]; then
+    echo "Warning: This script is designed for Debian 11 Bullseye systems."
+    echo "Your system is detected as: $OS_CODENAME"
+    echo "It is recommended to use Debian 11 Bullseye for a stable installation."
+    echo "However, the script has been tested on Debian 12 (Bookworm)."
+    if ! prompt_yes_no "Your system is detected as $OS_CODENAME. Do you wish to continue the installation?"; then
+        echo "用户选择退出脚本。"
+        exit 0
+    fi
+    echo "Proceeding with the installation..."
+else
+    echo "System detected as Debian 11 Bullseye. Proceeding with the installation..."
+fi
+
+# 检测系统架构
+ARCH=$(uname -m)
+case "$ARCH" in
+    "aarch64")
+        OS_AGENT_REPOSITORY="https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_aarch64.deb"
+        ;;
+    "x86_64")
+        OS_AGENT_REPOSITORY="https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_x86_64.deb"
+        ;;
+    "armv7l")
+        OS_AGENT_REPOSITORY="https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_armv7.deb"
+        ;;
+    "armv5")
+        OS_AGENT_REPOSITORY="https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_armv5.deb"
+        ;;
+    "i386" | "i686")
+        OS_AGENT_REPOSITORY="https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_i386.deb"
+        ;;
+    *)
+        echo "Error: Unsupported architecture detected ($ARCH)."
+        echo "Exiting the script."
+        exit 1
+        ;;
+esac
 HACS_REPOSITORY=https://github.com/hacs/integration/releases/download/2.0.1/hacs.zip
-OS_AGENT_REPOSITORY=https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_aarch64.deb
+# OS_AGENT_REPOSITORY=https://github.com/home-assistant/os-agent/releases/download/1.3.0/os-agent_1.3.0_linux_aarch64.deb
 SUPERVISED_REPOSITORY=https://github.com/home-assistant/supervised-installer/releases/download/1.8.0/homeassistant-supervised.deb
 
 # 创建日志目录
 LOG_DIR="$(pwd)/logs"
-mkdir -p $LOG_DIR
+mkdir -p "$LOG_DIR" || {
+    echo "❌ 日志目录创建失败：$LOG_DIR"
+    exit 1
+}
+
 
 # 获取当前时间
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -59,36 +164,80 @@ if [ -z "$RESTART_STEP" ]; then
     exit 1
 fi
 
+# 验证输入是否为有效整数且在范围内
+if ! [[ "$RESTART_STEP" =~ ^[0-2]$ ]]; then
+    echo "❌ 无效参数：支持参数为 0（第一次安装）、1（第一次重启后）、2（第二次重启后）。"
+    echo "示例：./script.sh 0"
+    exit 1
+fi
+
 # 日志文件名
 LOG_FILE="$LOG_DIR/${TIMESTAMP}_stage_${RESTART_STEP}.log"
 
 # 重定向所有输出到日志文件
 exec > >(tee -a "$LOG_FILE") 2>&1
-
 download_with_retry() {
     URL=$1
-    DEST=$2
+    DEST="$HA_DOWNLOAD_DIR/$(basename $2)"
     MAX_RETRIES=3
     RETRY_COUNT=0
 
-    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-        echo "尝试下载: $URL ..."
-        wget $URL -O $DEST
+    while true; do
+        echo "尝试下载: $URL 到 $DEST ..."
+        wget "$URL" -O "$DEST"
+
         if [ $? -eq 0 ]; then
-            echo "下载成功: $DEST"
+            echo "✅ 下载成功: $DEST"
             return 0
-        else
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "下载失败，正在重试 ($RETRY_COUNT/$MAX_RETRIES)..."
-            sleep 5  # 等待 5 秒后重试
+        fi
+
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo "❌ 下载失败，正在重试 ($RETRY_COUNT/$MAX_RETRIES)..."
+        sleep 5
+
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "❌ 下载失败 $MAX_RETRIES 次，请检查网络连接。"
+            if prompt_yes_no "是否继续尝试下载？"; then
+                RETRY_COUNT=0
+            else
+                echo "用户选择退出下载，退出函数。"
+                return 1
+            fi
         fi
     done
-
-    echo "下载失败 $MAX_RETRIES 次，请检查网络连接并手动重试。"
-    echo "按任意键重新尝试下载..."
-    read -n 1 -s -r
-    download_with_retry $URL $DEST  # 递归重试，直到成功
 }
+archive_logs() {
+    local mode=$1 # 归档模式：single（单阶段）或 all（所有阶段）
+    local archive_name
+    local unique_id
+    unique_id=$(date +"%H%M%S")
+
+    if [[ "$mode" == "single" ]]; then
+        archive_name="$LOG_DIR/logs_stage_${RESTART_STEP}_${unique_id}.tar.gz"
+        tar --warning=no-file-changed -czvf "$archive_name" "$LOG_FILE" || {
+            echo "错误：当前阶段日志归档失败：$archive_name"
+            return 1
+        }
+        echo "✅ 当前阶段日志已打包：$archive_name"
+    elif [[ "$mode" == "all" ]]; then
+        # 将归档文件放在 INITIAL_DIR，而不是 LOG_DIR 内
+        archive_name="$INITIAL_DIR/logs_all_${TIMESTAMP}_${unique_id}.tar.gz"
+        # 使用 -C 参数切换到 LOG_DIR 并打包内容，而不包含自身路径
+        tar --warning=no-file-changed -czvf "$archive_name" -C "$LOG_DIR" . || {
+            echo "错误：所有阶段日志归档失败：$archive_name"
+            return 1
+        }
+        echo "✅ 所有阶段日志已打包：$archive_name"
+    else
+        echo "❌ 无效的归档模式，请指定 'single' 或 'all'"
+        return 1
+    fi
+}
+
+
+
+
+
 # 最大重试次数
 MAX_RETRIES=5
 
@@ -176,6 +325,39 @@ check_and_start_containers() {
     check_and_start_containers $((retry_count + 1))
 }
 
+install_deb_with_check() {
+    local deb_file=$1
+    package_name=$(dpkg-deb --show --showformat='${Package}' "$deb_file")  # 包名，用于检查是否安装成功
+
+    echo "📦 正在安装 DEB 包：$deb_file"
+
+    # 检查文件是否存在
+    if [[ ! -f "$deb_file" ]]; then
+        echo "❌ 找不到 DEB 文件：$deb_file"
+        return 1
+    fi
+
+    # 安装 DEB 包
+    sudo dpkg -i "$deb_file"
+    
+    # 检查是否安装成功
+    if ! dpkg -l | grep -qw "$package_name"; then
+        echo "❌ 安装 $package_name 失败，正在尝试修复依赖问题..."
+        sudo apt-get --fix-broken install -y
+        
+        # 再次尝试安装
+        sudo dpkg -i "$deb_file"
+        if ! dpkg -l | grep -qw "$package_name"; then
+            echo "❌ 二次尝试后仍无法安装 $package_name，请检查系统状态并手动修复。"
+            return 1
+        fi
+    fi
+
+    echo "✅ 成功安装 $package_name"
+    return 0
+}
+
+
 # 根据传入的步骤执行不同的代码块
 case "$RESTART_STEP" in
     0)
@@ -203,42 +385,71 @@ EOF
         fi
 
         # 安装必要软件包
-        sudo apt install -y apparmor-utils jq software-properties-common apt-transport-https avahi-daemon ca-certificates curl dbus socat bluez
+        sudo apt install -y apparmor-utils jq software-properties-common apt-transport-https avahi-daemon ca-certificates curl dbus socat bluez 
         echo "apparmor=1 security=apparmor" | sudo tee -a /boot/cmdline.txt
         sudo apt install -y libtalloc2 libwbclient0
 
         # 安装其他必需包
-        sudo apt install -y apparmor cifs-utils curl dbus jq libglib2.0-bin lsb-release network-manager nfs-common systemd-journal-remote udisks2 wget
+        sudo apt install -y apparmor cifs-utils curl dbus jq libglib2.0-bin lsb-release network-manager nfs-common systemd-journal-remote udisks2 wget systemd-resolved
 
         # 下载并安装 OS Agent
-        download_with_retry $OS_AGENT_REPOSITORY "os-agent_1.3.0_linux_aarch64.deb"
-        sudo dpkg -i os-agent_1.3.0_linux_aarch64.deb
+        os_agent_deb="$HA_DOWNLOAD_DIR/os-agent_1.3.0_linux.deb"
+        download_with_retry "$OS_AGENT_REPOSITORY" "$os_agent_deb"
+        install_deb_with_check "$os_agent_deb" || {
+            echo "❌ OS Agent 安装失败，退出脚本。"
+            exit 1
+        }
+
 
         # 启用并启动 systemd-resolved 服务
         sudo systemctl enable systemd-resolved
         sudo systemctl start systemd-resolved
         if ! systemctl is-active --quiet systemd-resolved; then
-            echo "systemd-resolved 服务启动失败，退出脚本运行, 考虑重新当前阶段的脚本? 当前阶段为: $RESTART_STEP"
-            exit 1
+            echo "尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
+            sudo apt install -y systemd-resolved
+
+            # 再次检查服务是否启动成功
+            if ! systemctl is-active --quiet systemd-resolved; then
+                echo "重新安装并启动 systemd-resolved 服务失败，退出脚本运行。"
+                echo "请检查系统状态后重新运行当前阶段的脚本。当前阶段为: $RESTART_STEP"
+                exit 1
+            else
+                echo "重新安装并成功启动 systemd-resolved 服务，继续下一步。"
+            fi
         else
-            echo "systemd-resolved 服务启动成功"
+            echo "systemd-resolved 服务已启动。"
         fi
 
+
         # 重启
-        echo "第一阶段完成：请将系统重启，以进入第二阶段安装..."
+        echo "🎉 阶段 ${RESTART_STEP} 完成，系统即将重启进入下一阶段安装..."
+        archive_logs single
         sudo reboot
         ;;
 
     1)
         # 第一次重启后
         echo "正在执行第一次重启后的操作..."
+        # 检查 Docker 是否已安装
+        if ! command -v docker &> /dev/null; then
+            echo "Docker 未安装，请先安装 Docker 后再运行此脚本。"
+            exit 1
+        fi
+        # 提示用户是否需要临时镜像地址
+        if prompt_yes_no "是否需要临时镜像地址？"; then
+            IMAGE_PREFIX="docker.1panel.live/"
+        else
+            IMAGE_PREFIX=""
+        fi
+
+        DOCKER_COMPOSE_FILE="docker-compose.yml"
 
         # 安装 Home Assistant 的 Docker 配置
-        mkdir -p /home-assistant-config && cat <<EOF > docker-compose.yml
+        mkdir -p /home-assistant-config && cat <<EOF > ${DOCKER_COMPOSE_FILE}
 services:
   homeassistant:
     container_name: homeassistant
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: ${IMAGE_PREFIX}ghcr.io/home-assistant/home-assistant:stable
     volumes:
       - /home-assistant-config:/config
       - /etc/localtime:/etc/localtime:ro
@@ -249,6 +460,13 @@ services:
     network_mode: host
     restart: unless-stopped
 EOF
+        # 检查文件是否生成成功
+        if [[ ! -f "$DOCKER_COMPOSE_FILE" ]]; then
+            echo "docker-compose.yml 文件生成失败，请检查写入权限。"
+            exit 1
+        fi
+
+        echo "docker-compose.yml 文件已生成，使用的镜像地址为：${IMAGE_PREFIX}ghcr.io/home-assistant/home-assistant:stable"
 
         # 启动 Docker 容器
         docker compose up -d
@@ -256,11 +474,18 @@ EOF
         check_and_start_containers 0
 
         # 安装 HACS
-        cd /home-assistant-config
-        mkdir custom_components && cd custom_components && mkdir hacs
-        download_with_retry $HACS_REPOSITORY "hacs.zip"
-        mv ./hacs.zip ./hacs
-        cd hacs && unzip hacs.zip
+        # 确保目标路径存在
+        mkdir -p /home-assistant-config/custom_components/hacs
+
+        # 定义下载目标路径
+        hacs_zip="$HA_DOWNLOAD_DIR/hacs.zip"
+
+        # 下载 HACS
+        download_with_retry "$HACS_REPOSITORY" "$hacs_zip"
+
+        # 解压缩 HACS 到目标路径
+        unzip "$hacs_zip" -d /home-assistant-config/custom_components/hacs
+
         # 回到主目录
         cd ~
         # 安装homeassistant-supervised前置依赖
@@ -294,6 +519,7 @@ EOF
             "lsb-release"
             "nfs-common"
             "systemd-journal-remote"
+            "systemd-resolved"
             "udisks2"
             "pulseaudio"
         )
@@ -305,14 +531,21 @@ EOF
         sudo apt-get --fix-broken install -y
 
         # 安装 Home Assistant Supervised
-        download_with_retry $SUPERVISED_REPOSITORY "homeassistant-supervised.deb"
-        sudo dpkg -i homeassistant-supervised.deb
+        homeassistant_supervised_deb="$HA_DOWNLOAD_DIR/homeassistant-supervised.deb"
+        download_with_retry "$SUPERVISED_REPOSITORY" "$homeassistant_supervised_deb"
+        install_deb_with_check "$homeassistant_supervised_deb" || {
+            echo "❌ Home Assistant Supervised 安装失败，退出脚本。"
+            exit 1
+        }
+
+
         # 第三次检查
         sudo apt --fix-broken install -y
         sudo systemctl enable hassio-supervisor
 
         # 重启系统
-        echo "第二阶段完成：请将系统重启，进入第三阶段安装..."
+        echo "🎉 阶段 ${RESTART_STEP} 完成，系统即将重启进入下一阶段安装..."
+        archive_logs single
         sudo reboot
         ;;
 
@@ -360,39 +593,15 @@ EOF
                     echo "- $container"
                 done
 
-                # 提示用户选择是否继续监控
-                while true; do
-                    read -p "是否需要继续监控20分钟？(Y(y)/N(n)): " continue_monitoring
-                    case $continue_monitoring in
-                        [Yy]* )
-                            echo "继续监控容器状态..."
-                            start_time=$(date +%s)  # 重置监控开始时间
-                            break
-                            ;;
-                        [Nn]* )
-                            while true; do
-                                read -p "是否需要继续下一步操作？(Y(y)/N(n)): " proceed_next
-                                case $proceed_next in
-                                    [Yy]* )
-                                        echo "继续下一步操作..."
-                                        break 2  # 跳出内外层循环，进入下一步
-                                        ;;
-                                    [Nn]* )
-                                        echo "退出脚本。"
-                                        exit 0
-                                        ;;
-                                    * )
-                                        echo "请输入有效选项：Y(y) 或 N(n)。"
-                                        ;;
-                                esac
-                            done
-                            ;;
-                        * )
-                            echo "请输入有效选项：Y(y) 或 N(n)。"
-                            ;;
-                    esac
-                done
+                if prompt_yes_no "监控已超时，是否需要继续监控20分钟？"; then
+                    echo "继续监控容器状态..."
+                    start_time=$(date +%s)  # 重置监控开始时间
+                else
+                    echo "用户选择停止监控，退出脚本。"
+                    exit 0
+                fi
             fi
+
 
             # 等待5秒后继续检查
             sleep 5
@@ -400,23 +609,33 @@ EOF
         # 解决Home Assistant Supervisor 的 unhealthy检查错误
         CONTAINER_NAME="hassio_cli"
 
+        # 检查容器是否运行
+        # 检查容器是否运行
         if sudo docker ps --filter "name=${CONTAINER_NAME}" --filter "status=running" --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-            # 如果容器正在运行，执行忽略健康检查的命令
-            echo "容器 ${CONTAINER_NAME} 正在运行，正在执行忽略健康检查的命令..."
-            sudo docker exec ${CONTAINER_NAME} ha jobs options --ignore-conditions healthy
-            if [ $? -eq 0 ]; then
-                echo "命令执行成功。"
+            echo "容器 ${CONTAINER_NAME} 正在运行。"
+            
+            # 询问用户是否需要关闭健康检查
+            if prompt_yes_no "是否需要关闭健康检查命令？"; then
+                echo "正在执行忽略健康检查的命令..."
+                if sudo docker exec "${CONTAINER_NAME}" ha jobs options --ignore-conditions healthy; then
+                    echo "命令执行成功。"
+                else
+                    echo "命令执行失败，请检查容器状态和日志。"
+                    echo "您可以手动运行以下命令以尝试修复："
+                    echo "sudo docker exec ${CONTAINER_NAME} ha jobs options --ignore-conditions healthy"
+                fi
             else
-                echo "命令执行失败，请检查日志。"
+                echo "跳过关闭健康检查命令。"
             fi
         else
-            # 如果容器未启动，提示用户
+            # 如果容器未启动
             echo "容器 ${CONTAINER_NAME} 未启动，无法修复健康检查问题。"
             echo "请先启动容器 ${CONTAINER_NAME} 后再执行以下命令："
             echo
-            echo "sudo docker exec ${CONTAINER_NAME} ha jobs options --ignore-conditions healthy"
+            echo "sudo docker exec \"${CONTAINER_NAME}\" ha jobs options --ignore-conditions healthy"
             echo
         fi
+
 
         # 安装 HACS 配置项
         echo "现在可以选择是否先初始化 Home Assistant 或直接安装 HACS 加载项。"
@@ -438,15 +657,55 @@ EOF
         read -n 1 -s -r
         echo "开始安装 HACS 配置项"
 
+        cd /usr/share/hassio/homeassistant || {
+            echo "❌ 进入 Home Assistant 安装目录失败，请检查路径是否存在。"
+            exit 1
+        }
+        mkdir -p custom_components/hacs
+        cd custom_components/hacs
 
-        cd /usr/share/hassio/homeassistant
-        mkdir custom_components && cd custom_components && mkdir hacs
-        download_with_retry $HACS_REPOSITORY "hacs.zip"
-        mv ./hacs.zip ./hacs
-        cd hacs && unzip hacs.zip
-        cd ~
+        # 下载并解压 HACS
+        download_with_retry "$HACS_REPOSITORY" "hacs.zip"
+        unzip "$HA_DOWNLOAD_DIR/hacs.zip" -d .
 
-        echo "HACS 安装完成！快去$LOCAL_IP:8123 使用Home Assistant吧! 重启Home Assistant即可添加HACS加载项。无需重启系统"
+        # 返回初始工作目录
+        cd "$INITIAL_DIR" || {
+            echo "❌ 返回初始工作目录失败：$INITIAL_DIR"
+            exit 1
+        }
+
+        # 日志目录清理
+        if [ -d "$LOG_DIR" ] && [ "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
+            archive_logs all
+            echo "✅ 删除日志目录：$LOG_DIR"
+            # 避免清理 rm -rf /
+            if [[ "$LOG_DIR" == "/" || "$LOG_DIR" == "" ]]; then
+                echo "❌ 日志目录路径无效，跳过清理。"
+                exit 1
+            fi
+            rm -rf "$LOG_DIR"
+        else
+            echo "ℹ️ 日志目录已空或不存在，无需清理。"
+        fi
+
+        # 清理下载目录
+        if [ -d "$HA_DOWNLOAD_DIR" ] && [ "$(ls -A "$HA_DOWNLOAD_DIR")" ]; then
+            echo "🧹 清理下载目录：$HA_DOWNLOAD_DIR"
+            # 避免清理 rm -rf /
+            if [[ "$HA_DOWNLOAD_DIR" == "/" || "$HA_DOWNLOAD_DIR" == "" ]]; then
+                echo "❌ 下载目录路径无效，跳过清理。"
+                exit 1
+            fi
+            rm -rf "$HA_DOWNLOAD_DIR"/*
+            echo "✅ 下载目录已清理完成。"
+        else
+            echo "ℹ️ 下载目录为空，无需清理。"
+        fi
+
+
+        # 第三阶段完成
+        echo "🎉HACS 安装完成！快去 $LOCAL_IP:8123 使用 Home Assistant 吧! 重启 Home Assistant 即可添加 HACS 加载项。无需重启系统"
+
         ;;
     3) 
         echo "正在归档日志目录中的所有日志文件..."
@@ -457,13 +716,19 @@ EOF
             exit 1
         fi
 
-        # 打包日志文件
+        # 关闭日志输出流（停止日志写入）
+        exec > /dev/tty 2>&1
+
+        # 打包日志文件，忽略文件变化警告
         ARCHIVE_NAME="logs_${TIMESTAMP}.tar.gz"
-        tar -czvf "$ARCHIVE_NAME" -C "$LOG_DIR" .
+        tar --warning=no-file-changed -czvf "$ARCHIVE_NAME" -C "$LOG_DIR" .
 
         # 输出日志包存放位置
         echo "日志已成功打包。"
         echo "日志存放位置：$(pwd)/$ARCHIVE_NAME"
+
+        # 退出脚本
+        exit 0
         ;;
     *)
         # 处理无效输入
@@ -472,6 +737,3 @@ EOF
         ;;
 esac
 
-# 打包日志
-tar -czvf "$LOG_DIR/logs_${TIMESTAMP}.tar.gz" "$LOG_DIR"
-echo "日志打包完成：$LOG_DIR/logs_${TIMESTAMP}.tar.gz
