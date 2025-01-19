@@ -13,6 +13,8 @@
 - 安装分为 **三个阶段**，每个阶段都有明确的日志。
 - 支持 **Home Assistant Supervisor** 和 **HACS**。
 - 自动化安装，操作简单。
+- 新增支持 **Debian 12 (Bookworm)**（测试模式）。
+- 兼容 **ARM (aarch64, armv7, armv5)** 和 **AMD64 (x86_64)** 架构。
 
 ------
 
@@ -31,10 +33,36 @@
    ```
    bullseye
    ```
+   
+   或
+   
+   ```
+   bookworm
+   ```
 
 ------
 
 ### 安装步骤
+
+#### 方法一：使用 Git
+
+1. **克隆代码仓库：**确保已安装 **Git**。若未安装，请运行以下命令进行安装：
+
+```sh
+sudo apt update && sudo apt install -y git
+```
+
+安装完成后，请重新执行此步骤。
+
+2. 克隆代码仓库：
+
+```sh
+git clone https://github.com/CaixyPromise/rk3318-homeassistant-installer.git
+cd rk3318-homeassistant-installer/src
+chmod +x install_homeAssistant.sh
+```
+
+#### 方法二：直接下载
 
 1. **下载脚本**：
 

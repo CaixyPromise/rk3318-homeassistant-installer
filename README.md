@@ -17,6 +17,8 @@
 - Automated installation in **three stages**.
 - Supports **Home Assistant Supervisor** and **HACS**.
 - Clear logs for each installation stage.
+- Now supports **Debian 12 (Bookworm)** in testing mode. 
+- Compatible with **ARM (aarch64, armv7, armv5)** and **AMD64 (x86_64)** architectures.
 
 ------
 
@@ -41,6 +43,28 @@
 ------
 
 ### Installation Instructions
+
+#### Option 1: Using Git
+
+1. Make sure **Git** is installed. If Git is not installed, run the following command:
+
+```sh
+sudo apt update && sudo apt install -y git
+```
+
+After Git is successfully installed, proceed to step 2.
+
+2. Clone the repository:
+
+```shell
+git clone https://github.com/CaixyPromise/rk3318-homeassistant-installer.git
+cd rk3318-homeassistant-installer/src
+chmod +x install_homeAssistant.sh
+```
+
+If Git is not installed, run the following step 1 and repeat.
+
+#### Option 2: Direct Download
 
 1. **Download the script**:
 
