@@ -176,6 +176,83 @@ LOG_FILE="$LOG_DIR/${TIMESTAMP}_stage_${RESTART_STEP}.log"
 
 # 重定向所有输出到日志文件
 exec > >(tee -a "$LOG_FILE") 2>&1
+
+auto_install_package() {
+    local package_name=$1
+
+    if [ -z "$package_name" ]; then
+        echo "❌ Error: Please provide a package name."
+        return 1
+    fi
+
+    echo "🔍 Querying package information for: $package_name"
+
+    # Check if the package is already installed
+    if dpkg -l | grep -qw "$package_name"; then
+        echo "✅ Package '$package_name' is already installed."
+        return 0
+    fi
+
+    # Get candidate version using apt-cache policy
+    local policy_output
+    policy_output=$(apt-cache policy "$package_name")
+    local available_version
+    available_version=$(echo "$policy_output" | awk '/Candidate:/ {print $2}')
+
+    if [ -z "$available_version" ]; then
+        echo "❌ No available version found for $package_name."
+        return 1
+    fi
+
+    echo "🟢 Candidate version: $available_version"
+
+    # Create a temporary directory for downloading
+    local temp_dir="/$HA_DOWNLOAD_DIR/apt_download"
+    mkdir -p "$temp_dir"
+
+    # Attempt to download the package using apt-get download
+    echo "📥 Downloading package $package_name..."
+    cd "$temp_dir" || return
+    if ! apt-get download "$package_name"; then
+        echo "❌ Failed to download $package_name. Check your network or package availability."
+        return 1
+    fi
+
+    # Find the downloaded package file
+    local deb_file
+    deb_file=$(ls | grep -E "^${package_name}_.*\.deb$" | head -n 1)
+
+    if [ -z "$deb_file" ]; then
+        echo "❌ Failed to locate the downloaded .deb file for $package_name."
+        return 1
+    fi
+
+    echo "📦 Found package file: $deb_file"
+
+    # Install the package using dpkg
+    echo "📦 Installing $deb_file..."
+    sudo dpkg -i "$deb_file"
+
+    # Fix dependencies if necessary
+    if [ $? -ne 0 ]; then
+        echo "⚠️  Fixing broken dependencies..."
+        sudo apt-get --fix-broken install -y
+        sudo dpkg -i "$deb_file"
+    fi
+
+    # Verify installation
+    if dpkg -l | grep -qw "$package_name"; then
+        echo "✅ $package_name has been successfully installed."
+    else
+        echo "❌ Installation failed for $package_name."
+    fi
+
+    # Clean up temporary files
+    rm -rf "$temp_dir"
+    echo "🧹 Temporary files cleaned up."
+}
+
+
 download_with_retry() {
     URL=$1
     DEST="$HA_DOWNLOAD_DIR/$(basename $2)"
@@ -212,17 +289,26 @@ archive_logs() {
     local unique_id
     unique_id=$(date +"%H%M%S")
 
+    # 显式关闭日志输出流，确保文件可用
+    exec > /dev/tty 2>&1
+
     if [[ "$mode" == "single" ]]; then
         archive_name="$LOG_DIR/logs_stage_${RESTART_STEP}_${unique_id}.tar.gz"
+        if [[ ! -f "$LOG_FILE" ]]; then
+            echo "❌ 日志文件不存在：$LOG_FILE"
+            return 1
+        fi
         tar --warning=no-file-changed -czvf "$archive_name" "$LOG_FILE" || {
             echo "错误：当前阶段日志归档失败：$archive_name"
             return 1
         }
         echo "✅ 当前阶段日志已打包：$archive_name"
     elif [[ "$mode" == "all" ]]; then
-        # 将归档文件放在 INITIAL_DIR，而不是 LOG_DIR 内
         archive_name="$INITIAL_DIR/logs_all_${TIMESTAMP}_${unique_id}.tar.gz"
-        # 使用 -C 参数切换到 LOG_DIR 并打包内容，而不包含自身路径
+        if [[ ! -d "$LOG_DIR" ]]; then
+            echo "❌ 日志目录不存在：$LOG_DIR"
+            return 1
+        fi
         tar --warning=no-file-changed -czvf "$archive_name" -C "$LOG_DIR" . || {
             echo "错误：所有阶段日志归档失败：$archive_name"
             return 1
@@ -233,10 +319,6 @@ archive_logs() {
         return 1
     fi
 }
-
-
-
-
 
 # 最大重试次数
 MAX_RETRIES=5
@@ -253,37 +335,66 @@ check_and_install_packages() {
     local missing_packages=()
     for package in "${packages[@]}"; do
         if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
-            echo "$package 未安装或安装失败"
+            echo "⚠️  $package 未安装或安装失败"
             missing_packages+=("$package")
         else
-            echo "$package 已安装"
+            echo "✅ $package 已安装"
         fi
     done
 
     # 如果有未安装的软件包
     if [ ${#missing_packages[@]} -ne 0 ]; then
-        echo "需要重新安装以下未安装的软件包: ${missing_packages[*]}"
+        echo "⚠️  需要重新安装以下未安装的软件包: ${missing_packages[*]}"
 
-        # 更新包索引并安装
+        # 更新包索引并尝试安装
         sudo apt-get update
         sudo apt-get install -y "${missing_packages[@]}"
+        local failed_packages=()
 
-        # 检查修复依赖问题
-        sudo apt-get --fix-broken install -y
+        # 检查修复依赖问题并记录仍然未安装的包
+        for package in "${missing_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+                failed_packages+=("$package")
+            fi
+        done
 
-        # 递归检查和安装
-        if [ $retry_count -lt $MAX_RETRIES ]; then
-            echo "重新检查安装状态，当前重试次数：$((retry_count + 1))"
-            check_and_install_packages $((retry_count + 1)) "${packages[@]}"
+        # 尝试使用 auto_install_package 函数处理仍未安装的软件包
+        if [ ${#failed_packages[@]} -ne 0 ]; then
+            echo "🔄 使用 auto_install_package 尝试安装以下未成功的软件包: ${failed_packages[*]}"
+            for package in "${failed_packages[@]}"; do
+                if ! auto_install_package "$package"; then
+                    echo "❌ 无法安装 $package，请手动检查或安装后重试。"
+                else
+                    echo "✅ $package 通过 auto_install_package 成功安装。"
+                fi
+            done
+        fi
+
+        # 检查是否还有未安装的软件包
+        local remaining_packages=()
+        for package in "${failed_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+                remaining_packages+=("$package")
+            fi
+        done
+
+        if [ ${#remaining_packages[@]} -gt 0 ]; then
+            echo "❌ 以下软件包仍未成功安装: ${remaining_packages[*]}"
+            if [ $retry_count -lt $MAX_RETRIES ]; then
+                echo "🔄 重新检查安装状态，当前重试次数：$((retry_count + 1))"
+                check_and_install_packages $((retry_count + 1)) "${remaining_packages[@]}"
+            else
+                echo "❌ 超出最大重试次数 ($MAX_RETRIES)。请手动检查以下软件包: ${remaining_packages[*]}"
+                exit 1
+            fi
         else
-            echo "超出最大重试次数 ($MAX_RETRIES)。退出脚本。"
-            echo "需要重新安装以下未安装的软件包: ${missing_packages[*]}"
-            exit 1
+            echo "✅ 所有软件包已成功安装。"
         fi
     else
-        echo "所有软件包都已成功安装，无需进一步操作。"
+        echo "✅ 所有软件包已成功安装，无需进一步操作。"
     fi
 }
+
 
 # 容器检查和启动函数
 check_and_start_containers() {
@@ -365,9 +476,13 @@ case "$RESTART_STEP" in
         echo "正在执行第一次安装操作..."
 
         # 添加源
-        echo "deb http://deb.debian.org/debian/ bullseye main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb http://deb.debian.org/debian/ bullseye-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
-        echo "deb http://security.debian.org/debian-security bullseye-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        # 获取系统发行版本代号
+        OS_CODENAME=$(lsb_release -sc)
+
+        # 添加官方源
+        echo "deb http://deb.debian.org/debian/ ${OS_CODENAME} main contrib non-free" | sudo tee /etc/apt/sources.list
+        echo "deb http://deb.debian.org/debian/ ${OS_CODENAME}-updates main contrib non-free" | sudo tee -a /etc/apt/sources.list
+        echo "deb http://security.debian.org/debian-security ${OS_CODENAME}-security main contrib non-free" | sudo tee -a /etc/apt/sources.list
         sudo apt update
 
         # 安装网络管理器
@@ -407,7 +522,7 @@ EOF
         if ! systemctl is-active --quiet systemd-resolved; then
             echo "尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
             sudo apt install -y systemd-resolved
-
+            sudo apt-get --fix-broken install -y
             # 再次检查服务是否启动成功
             if ! systemctl is-active --quiet systemd-resolved; then
                 echo "重新安装并启动 systemd-resolved 服务失败，退出脚本运行。"
@@ -435,12 +550,6 @@ EOF
             echo "Docker 未安装，请先安装 Docker 后再运行此脚本。"
             exit 1
         fi
-        # 提示用户是否需要临时镜像地址
-        if prompt_yes_no "是否需要临时镜像地址？"; then
-            IMAGE_PREFIX="docker.1panel.live/"
-        else
-            IMAGE_PREFIX=""
-        fi
 
         DOCKER_COMPOSE_FILE="docker-compose.yml"
 
@@ -449,7 +558,7 @@ EOF
 services:
   homeassistant:
     container_name: homeassistant
-    image: ${IMAGE_PREFIX}ghcr.io/home-assistant/home-assistant:stable
+    image: ghcr.io/home-assistant/home-assistant:stable
     volumes:
       - /home-assistant-config:/config
       - /etc/localtime:/etc/localtime:ro
@@ -466,10 +575,11 @@ EOF
             exit 1
         fi
 
-        echo "docker-compose.yml 文件已生成，使用的镜像地址为：${IMAGE_PREFIX}ghcr.io/home-assistant/home-assistant:stable"
+        echo "docker-compose.yml 文件已生成，使用的镜像地址为：ghcr.io/home-assistant/home-assistant:stable"
 
         # 启动 Docker 容器
         docker compose up -d
+
         # 调用容器检查和启动函数
         check_and_start_containers 0
 
@@ -519,7 +629,6 @@ EOF
             "lsb-release"
             "nfs-common"
             "systemd-journal-remote"
-            "systemd-resolved"
             "udisks2"
             "pulseaudio"
         )
