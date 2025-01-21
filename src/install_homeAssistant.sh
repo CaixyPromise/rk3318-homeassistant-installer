@@ -534,6 +534,59 @@ add_source_if_not_exists() {
   fi
 }
 
+install_systemd_resolved() {
+    # 检查系统是否安装了 resolvconf
+    if command -v resolvconf &> /dev/null; then
+        echo "resolvconf is installed, modifying resolved.conf..."
+        # 安装resolved
+        apt install -y systemd-resolved
+
+        # 创建 /etc/systemd/resolved.conf 的备份
+        cp /etc/systemd/resolved.conf /etc/systemd/resolved.conf.bak
+        echo "Backup of /etc/systemd/resolved.conf created."
+
+        # 修改 resolved.conf 配置
+        cat <<EOF > /etc/systemd/resolved.conf
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it
+#  under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation; either version 2.1 of the License, or
+#  (at your option) any later version.
+#
+# Entries in this file show the compile time defaults.
+# You can change settings by editing this file.
+# Defaults can be restored by simply deleting this file.
+#
+# See resolved.conf(5) for details
+[Resolve]
+DNS=1.1.1.1 8.8.8.8 114.114.114.114
+FallbackDNS=1.0.0.1 114.114.115.115
+DNSSEC=no
+DNSOverTLS=no
+DNSStubListener=no
+#Domains=
+#MulticastDNS=yes
+#LLMNR=yes
+#Cache=yes
+#ReadEtcHosts=yes
+#ResolveUnicastSingleLabel=no
+EOF
+        sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 
+        # 重启 systemd-resolved 服务
+        systemctl restart systemd-resolved
+        echo "systemd-resolved restarted with updated configuration."
+        check_network
+    else
+        echo "resolvconf is not installed. Proceeding with normal installation of systemd-resolved."
+
+        # 安装 systemd-resolved
+        apt update
+        apt install -y systemd-resolved
+        echo "systemd-resolved installed."
+    fi
+}
+
 
 # 根据传入的步骤执行不同的代码块
 case "$RESTART_STEP" in
@@ -612,25 +665,13 @@ EOF
         install_and_check "${ADDITIONAL_PACKAGES[@]}"
         sudo apt-get --fix-broken install -y
 
-        # 下载并安装 OS Agent
-        os_agent_deb="$HA_DOWNLOAD_DIR/os-agent_1.3.0_linux.deb"
-        download_with_retry "$OS_AGENT_REPOSITORY" "$os_agent_deb"
-        install_deb_with_check "$os_agent_deb" || {
-            echo "❌ OS Agent 安装失败，退出脚本。"
-            exit 1
-        }
-
-
         # 启用并启动 systemd-resolved 服务
         sudo systemctl enable systemd-resolved
         sudo systemctl start systemd-resolved
         if ! systemctl is-active --quiet systemd-resolved; then
             echo "尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
-            FIX_PACKAGE=(
-                "systemd-resolved"
-            )
-            install_and_check "${FIX_PACKAGE}"
-            # sudo apt install -y systemd-resolved
+            install_systemd_resolved
+            # install_and_check "${FIX_PACKAGE}"
             sudo apt-get --fix-broken install -y
             # 再次检查服务是否启动成功
             if ! systemctl is-active --quiet systemd-resolved; then
@@ -643,7 +684,16 @@ EOF
         else
             echo "systemd-resolved 服务已启动。"
         fi
+        sudo systemctl enable systemd-resolved
+        sudo systemctl start systemd-resolved
 
+        # 下载并安装 OS Agent
+        os_agent_deb="$HA_DOWNLOAD_DIR/os-agent_1.3.0_linux.deb"
+        download_with_retry "$OS_AGENT_REPOSITORY" "$os_agent_deb"
+        install_deb_with_check "$os_agent_deb" || {
+            echo "❌ OS Agent 安装失败，退出脚本。"
+            exit 1
+        }
 
         # 重启
         echo "🎉 阶段 ${RESTART_STEP} 完成，系统即将重启进入下一阶段安装..."
