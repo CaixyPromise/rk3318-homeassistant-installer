@@ -23,7 +23,7 @@ echo "Author: [CAIXYPROMISE](https://github.com/CaixyPromise)"
 echo "License: MIT"
 echo "GitHub repository: https://github.com/CaixyPromise/rk3318-homeassistant-installer"
 echo "Version: 1.4"
-echo "Last modified: 2025-01-19"
+echo "Last modified: 2025-02-04"
 echo "Supported OS: "
 echo "  - Debian Bullseye (11) - Stable and Recommended ⭐"
 echo "  - Debian Bookworm (12) - Beta, under testing and bug fixes 🔨"
@@ -47,6 +47,12 @@ mkdir -p "$HA_DOWNLOAD_DIR" || {
     echo "❌ 无法创建下载目录：$HA_DOWNLOAD_DIR"
     exit 1
 }
+# 定义颜色变量
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # 无颜色（Reset）
 
 
 check_network() {
@@ -665,28 +671,6 @@ EOF
         install_and_check "${ADDITIONAL_PACKAGES[@]}"
         sudo apt-get --fix-broken install -y
 
-        # 启用并启动 systemd-resolved 服务
-        sudo systemctl enable systemd-resolved
-        sudo systemctl start systemd-resolved
-        if ! systemctl is-active --quiet systemd-resolved; then
-            echo "尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
-            install_systemd_resolved
-            # install_and_check "${FIX_PACKAGE}"
-            sudo apt-get --fix-broken install -y
-            # 再次检查服务是否启动成功
-            if ! systemctl is-active --quiet systemd-resolved; then
-                echo "重新安装并启动 systemd-resolved 服务失败，退出脚本运行。"
-                echo "请检查系统状态后重新运行当前阶段的脚本。当前阶段为: $RESTART_STEP"
-                exit 1
-            else
-                echo "重新安装并成功启动 systemd-resolved 服务，继续下一步。"
-            fi
-        else
-            echo "systemd-resolved 服务已启动。"
-        fi
-        sudo systemctl enable systemd-resolved
-        sudo systemctl start systemd-resolved
-
         # 下载并安装 OS Agent
         os_agent_deb="$HA_DOWNLOAD_DIR/os-agent_1.3.0_linux.deb"
         download_with_retry "$OS_AGENT_REPOSITORY" "$os_agent_deb"
@@ -695,12 +679,50 @@ EOF
             exit 1
         }
 
+        # 启用并启动 systemd-resolved 服务
+        # 启用并启动 systemd-resolved 服务
+        sudo systemctl enable systemd-resolved
+        sudo systemctl start systemd-resolved
+
+        if ! systemctl is-active --quiet systemd-resolved; then
+            echo "❌ 尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
+
+            # 提示用户是否需要安装 systemd-resolved
+            echo -e "${YELLOW}⚠️ 注意：安装或启用 systemd-resolved 服务可能会修改网络配置，导致网络连接中断。${NC}"
+            echo -e "${YELLOW}如果不安装该服务，后续可能会遇到依赖问题或服务无法正常运行。${NC}"
+            echo -e "${YELLOW}此外，在 Debian 12 系统上，runsolved 可能会被移除，将会使用 systemd-resolved 作为替代。${NC}"
+
+            if prompt_yes_no "是否要安装并启用 systemd-resolved 服务？"; then
+                echo -e "${GREEN}✅ 用户选择安装 systemd-resolved 服务，正在执行安装过程...${NC}"
+
+                # 尝试重新安装并修复依赖
+                install_systemd_resolved
+                sudo apt-get --fix-broken install -y
+
+                # 启动并检查服务是否启动成功
+                sudo systemctl enable systemd-resolved
+                sudo systemctl start systemd-resolved
+                
+                if ! systemctl is-active --quiet systemd-resolved; then
+                    echo -e "${RED}❌ 重新安装并启动 systemd-resolved 服务失败，退出脚本运行。${NC}"
+                    echo -e "${RED}请检查系统状态后重新运行当前阶段的脚本。当前阶段为: $RESTART_STEP${NC}"
+                    exit 1
+                else
+                    echo -e "${GREEN}✅ 重新安装并成功启动 systemd-resolved 服务，继续下一步。${NC}"
+                fi
+            else
+                echo -e "${RED}❌ 用户选择不安装 systemd-resolved 服务，后续可能会遇到依赖问题。${NC}"
+                echo -e "${RED}如果遇到问题，请重新运行脚本并选择安装该服务。${NC}"
+            fi
+        else
+            echo -e "${GREEN}✅ systemd-resolved 服务已成功启动。${NC}"
+        fi
+
         # 重启
         echo "🎉 阶段 ${RESTART_STEP} 完成，系统即将重启进入下一阶段安装..."
         archive_logs single
         sudo reboot
         ;;
-
     1)
         # 第一次重启后
         echo "正在执行第一次重启后的操作..."
