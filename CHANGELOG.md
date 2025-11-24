@@ -2,7 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/) (with optional pre-release tags such as `-beta` when appropriate).
+
+------
+
+## [v1.5-beta] - 2025-11-24
+
+### Added
+
+- **Global error collection and exit summary**
+  - Introduced a centralized error collection system that records all issues during script execution and prints an **Installation Issues Summary** on exit, including suggested manual commands to fix common problems.
+- **Step 2 pre-flight environment check**
+  - Added `precheck_step2_environment` to verify that steps `0` and `1` completed successfully before running step `2`, checking core packages, OS Agent, Home Assistant Supervised, Docker/Compose, `hassio-supervisor` service, key directories, and the `homeassistant` container.
+
+### Improved
+
+- **Logging and archiving robustness**
+  - Refined log archiving to produce per-stage archives with human-readable details (archive path, size, and timestamp), and ensured logs are safely archived before final cleanup at the end of step `2`.
+- **Download directory handling**
+  - Fixed and unified the use of the global download directory for all downloads, and enhanced download output to include target paths and file sizes.
+- **Docker and environment diagnostics**
+  - Strengthened Docker and `docker compose` checks in steps `1` and `2`, including automatic attempts to start services and clear guidance when manual intervention is required (e.g., installing `docker.io` / `docker-compose-plugin`, checking systemd status and logs).
+
+### Update
+- **Fixed Home Assistant container image version**
+  - The Home Assistant container image version is fixed at 2025.3.
+
+### Fixed
+
+- **Path and installation edge cases**
+  - Resolved several issues in the package auto-install and download utilities, including incorrect path handling and missing `.deb` detection, reducing the likelihood of silent failures between installation stages.
 
 ------
 
