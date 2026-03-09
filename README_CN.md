@@ -110,6 +110,18 @@ ls
   ```
 
   启动 Home Assistant 容器并完成配置。
+
+- **一键回滚（新增）**：
+
+  ```bash
+  sudo ./install_homeAssistant.sh rollback
+  ```
+
+  脚本现在会在关键文件修改前，将备份写入 `ha_backups/<时间戳>/`（如 APT 源与 NetworkManager 配置）。若阶段 0 网络异常，可执行回滚恢复最近一次备份。
+
+- **x86 / Debian 12 网络处理（新增）**：
+
+  阶段 0 现在包含 Debian 12 x86 兼容修复：如果历史安装让 `systemd-resolved` 接管了 `/etc/resolv.conf`，脚本会自动恢复静态 DNS，并保持 NetworkManager 不接管 `ifupdown` 网卡，避免安装后断网。
   
 - **访问 Home Assistant**：
 

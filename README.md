@@ -108,6 +108,18 @@ Follow the staged installation steps below. After each stage, **reboot your syst
   ```
 
   Starts Home Assistant containers and finalizes the setup.
+
+- **One-click rollback (new)**:
+
+  ```bash
+  sudo ./install_homeAssistant.sh rollback
+  ```
+
+  The installer now stores backups in `ha_backups/<timestamp>/` before key file writes (APT sources and NetworkManager config). If stage 0 network setup goes wrong, run rollback to restore the latest backup.
+
+- **Network behavior on x86 / Debian 12 (new)**:
+
+  Stage 0 now includes a Debian 12 x86 compatibility fix: if `systemd-resolved` previously took over `/etc/resolv.conf`, the script restores static DNS and keeps NetworkManager from taking over `ifupdown` interfaces, preventing post-install network loss.
   
 - **Access Home Assistant**:
 

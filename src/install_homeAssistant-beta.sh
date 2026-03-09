@@ -43,6 +43,7 @@ fi
 # 定义全局下载目录
 INITIAL_DIR=$(pwd)
 HA_DOWNLOAD_DIR="$INITIAL_DIR/ha_downloads"
+BKP_BASE_DIR="$INITIAL_DIR/ha_backups"
 mkdir -p "$HA_DOWNLOAD_DIR" || {
     echo "❌ 无法创建下载目录：$HA_DOWNLOAD_DIR"
     exit 1
@@ -154,6 +155,11 @@ mkdir -p "$LOG_DIR" || {
     exit 1
 }
 
+mkdir -p "$BKP_BASE_DIR" || {
+    echo "❌ 备份目录创建失败：$BKP_BASE_DIR"
+    exit 1
+}
+
 
 # 获取当前时间
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -164,6 +170,74 @@ echo "操作系统信息: $OS_INFO"
 
 # 检查传入的参数 (重启次数)
 RESTART_STEP=$1
+
+BACKUP_SESSION_ID=$(date +"%Y%m%d_%H%M%S")
+BACKUP_DIR="$BKP_BASE_DIR/$BACKUP_SESSION_ID"
+BACKUP_MANIFEST="$BACKUP_DIR/manifest.tsv"
+
+start_backup_session() {
+    mkdir -p "$BACKUP_DIR"
+    : > "$BACKUP_MANIFEST"
+}
+
+backup_target() {
+    local target="$1"
+    local kind="file"
+    [ -L "$target" ] && kind="symlink"
+
+    mkdir -p "$BACKUP_DIR"
+    local safe_name
+    safe_name=$(echo "$target" | sed 's#^/##; s#/#__#g')
+    local backup_path="$BACKUP_DIR/$safe_name"
+
+    if [ -L "$target" ]; then
+        local link_target
+        link_target=$(readlink "$target")
+        printf "%s\tsymlink\t%s\t%s\n" "$target" "$backup_path" "$link_target" >> "$BACKUP_MANIFEST"
+    elif [ -e "$target" ]; then
+        sudo cp -a "$target" "$backup_path"
+        printf "%s\tfile\t%s\t\n" "$target" "$backup_path" >> "$BACKUP_MANIFEST"
+    else
+        printf "%s\tmissing\t\t\n" "$target" >> "$BACKUP_MANIFEST"
+    fi
+}
+
+rollback_backup() {
+    local session="${1:-latest}"
+    local rollback_dir
+
+    if [ "$session" = "latest" ]; then
+        rollback_dir=$(find "$BKP_BASE_DIR" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+    else
+        rollback_dir="$BKP_BASE_DIR/$session"
+    fi
+
+    if [ -z "$rollback_dir" ] || [ ! -f "$rollback_dir/manifest.tsv" ]; then
+        echo "❌ 未找到可回滚的备份：$session"
+        exit 1
+    fi
+
+    echo "♻️ 正在根据备份回滚：$rollback_dir"
+    tac "$rollback_dir/manifest.tsv" | while IFS=$'\t' read -r target type backup extra; do
+        case "$type" in
+            file)
+                sudo cp -a "$backup" "$target"
+                ;;
+            symlink)
+                sudo ln -sfn "$extra" "$target"
+                ;;
+            missing)
+                sudo rm -f "$target"
+                ;;
+        esac
+    done
+    echo "✅ 回滚完成。"
+}
+
+if [ "$RESTART_STEP" = "rollback" ] || [ "$RESTART_STEP" = "--rollback" ]; then
+    rollback_backup "$2"
+    exit 0
+fi
 
 # 如果没有传入参数，提示用户输入
 if [ -z "$RESTART_STEP" ]; then
@@ -183,6 +257,7 @@ LOG_FILE="$LOG_DIR/${TIMESTAMP}_stage_${RESTART_STEP}.log"
 
 # 重定向所有输出到日志文件
 exec > >(tee -a "$LOG_FILE") 2>&1
+start_backup_session
 
 # 全局错误收集与汇总
 ERRORS=()
@@ -651,11 +726,64 @@ add_source_if_not_exists() {
 
   # 检查源是否已存在
   if ! grep -Fq "$SOURCE" "$FILE"; then
+    backup_target "$FILE"
     echo "$SOURCE" | sudo tee -a "$FILE"
     echo "已添加源: $SOURCE"
   else
     echo "源已存在: $SOURCE"
   fi
+}
+
+deduplicate_sources_list() {
+    local FILE="/etc/apt/sources.list"
+    local tmp_file
+    tmp_file=$(mktemp)
+    backup_target "$FILE"
+
+    awk '
+        /^[[:space:]]*$/ { print; next }
+        /^[[:space:]]*#/ { print; next }
+        {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            if (!seen[$0]++) print
+        }
+    ' "$FILE" > "$tmp_file"
+    sudo cp "$tmp_file" "$FILE"
+    rm -f "$tmp_file"
+}
+
+repair_debian12_x86_network() {
+    local distro_version
+    distro_version=$(lsb_release -sr)
+
+    if [ "$(uname -m)" != "x86_64" ] || [[ "$distro_version" != 12* ]]; then
+        return 0
+    fi
+
+    echo "🛠️ 检测到 Debian 12 x86_64，执行网络兼容修复..."
+
+    if dpkg -s systemd-resolved >/dev/null 2>&1; then
+        backup_target "/etc/resolv.conf"
+        sudo systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
+
+        if [ -L /etc/resolv.conf ]; then
+            sudo rm -f /etc/resolv.conf
+        fi
+
+        sudo tee /etc/resolv.conf > /dev/null <<'EOF'
+nameserver 223.5.5.5
+nameserver 8.8.8.8
+options timeout:2 attempts:2
+EOF
+        echo "✅ 已恢复 /etc/resolv.conf 为静态 DNS，避免 systemd-resolved 接管导致断网。"
+    fi
+
+    backup_target "/etc/network/interfaces"
+    if [ -f /etc/network/interfaces ]; then
+        if ! grep -Eq '^\s*source\s+/etc/network/interfaces\.d/\*$' /etc/network/interfaces; then
+            echo 'source /etc/network/interfaces.d/*' | sudo tee -a /etc/network/interfaces > /dev/null
+        fi
+    fi
 }
 
 install_systemd_resolved() {
@@ -874,6 +1002,7 @@ case "$RESTART_STEP" in
         add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-updates main contrib non-free"
         add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ ${OS_CODENAME}-backports main contrib non-free"
         add_source_if_not_exists "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security ${OS_CODENAME}-security main contrib non-free"
+        deduplicate_sources_list
 
         sudo apt update
 
@@ -882,6 +1011,7 @@ case "$RESTART_STEP" in
 
         # 配置 NetworkManager
         if [ ! -s /etc/NetworkManager/conf.d/100-disable-wifi-mac-randomization.conf ]; then
+            backup_target "/etc/NetworkManager/conf.d/100-disable-wifi-mac-randomization.conf"
             cat << EOF | sudo tee /etc/NetworkManager/conf.d/100-disable-wifi-mac-randomization.conf
 [connection]
 wifi.mac-address-randomization=1
@@ -890,6 +1020,16 @@ wifi.mac-address-randomization=1
 wifi.scan-rand-mac-address=no
 EOF
         fi
+
+        if [ ! -s /etc/NetworkManager/conf.d/99-ifupdown-managed.conf ]; then
+            backup_target "/etc/NetworkManager/conf.d/99-ifupdown-managed.conf"
+            cat << EOF | sudo tee /etc/NetworkManager/conf.d/99-ifupdown-managed.conf
+[ifupdown]
+managed=false
+EOF
+        fi
+
+        repair_debian12_x86_network
 
         # 安装必要软件包
         # 必要的软件包列表
@@ -939,44 +1079,14 @@ EOF
             exit 1
         }
 
-        # 启用并启动 systemd-resolved 服务
-        # 启用并启动 systemd-resolved 服务
-        sudo systemctl enable systemd-resolved
-        sudo systemctl start systemd-resolved
-
-        if ! systemctl is-active --quiet systemd-resolved; then
-            echo "❌ 尝试启动 systemd-resolved 服务失败，正在尝试重新安装..."
-
-            # 提示用户是否需要安装 systemd-resolved
-            echo -e "${YELLOW}⚠️ 注意：安装或启用 systemd-resolved 服务可能会修改网络配置，导致网络连接中断。${NC}"
-            echo -e "${YELLOW}如果不安装该服务，后续可能会遇到依赖问题或服务无法正常运行。${NC}"
-            echo -e "${YELLOW}此外，在 Debian 12 系统上，runsolved 可能会被移除，将会使用 systemd-resolved 作为替代。${NC}"
-
-            if prompt_yes_no "是否要安装并启用 systemd-resolved 服务？"; then
-                echo -e "${GREEN}✅ 用户选择安装 systemd-resolved 服务，正在执行安装过程...${NC}"
-
-                # 尝试重新安装并修复依赖
-                install_systemd_resolved
-                sudo apt-get --fix-broken install -y
-
-                # 启动并检查服务是否启动成功
-                sudo systemctl enable systemd-resolved
-                sudo systemctl start systemd-resolved
-                
-                if ! systemctl is-active --quiet systemd-resolved; then
-                    echo -e "${RED}❌ 重新安装并启动 systemd-resolved 服务失败，退出脚本运行。${NC}"
-                    echo -e "${RED}请检查系统状态后重新运行当前阶段的脚本。当前阶段为: $RESTART_STEP${NC}"
-                    exit 1
-                else
-                    echo -e "${GREEN}✅ 重新安装并成功启动 systemd-resolved 服务，继续下一步。${NC}"
-                fi
-            else
-                echo -e "${RED}❌ 用户选择不安装 systemd-resolved 服务，后续可能会遇到依赖问题。${NC}"
-                echo -e "${RED}如果遇到问题，请重新运行脚本并选择安装该服务。${NC}"
-            fi
+        # 避免在 Debian 13 / x86 场景强制接管 DNS 导致断网
+        if systemctl list-unit-files | grep -q '^systemd-resolved.service'; then
+            echo "ℹ️ 检测到 systemd-resolved 服务，已避免强制启用；Debian 12 x86 将应用兼容修复。"
         else
-            echo -e "${GREEN}✅ systemd-resolved 服务已成功启动。${NC}"
+            echo "ℹ️ 系统未提供 systemd-resolved，跳过安装与启用，避免网络配置被改写。"
         fi
+
+        check_network
 
         # 重启前归档日志
         echo "🎉 阶段 ${RESTART_STEP} 完成，系统即将重启进入下一阶段安装..."
@@ -1344,4 +1454,3 @@ EOF
         exit 1
         ;;
 esac
-
