@@ -636,36 +636,134 @@ deduplicate_sources_list() {
 
 repair_debian12_x86_network() {
     local distro_version
+    local default_iface
+    local default_iface_type="ethernet"
+    local ipv4_cidr=""
+    local ipv4_gateway=""
+    local current_dns=""
+    local nm_connection_name=""
+    local nm_connection_file=""
+    local moved_ifupdown_profile=false
     distro_version=$(lsb_release -sr)
 
     if [ "$(uname -m)" != "x86_64" ] || [[ "$distro_version" != 12* ]]; then
         return 0
     fi
 
-    echo "🛠️ 检测到 Debian 12 x86_64，执行网络兼容修复..."
+    default_iface=$(ip route 2>/dev/null | awk '/^default/ {print $5; exit}')
 
-    if dpkg -s systemd-resolved >/dev/null 2>&1; then
-        backup_target "/etc/resolv.conf"
-        sudo systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
-
-        if [ -L /etc/resolv.conf ]; then
-            sudo rm -f /etc/resolv.conf
-        fi
-
-        sudo tee /etc/resolv.conf > /dev/null <<'EOF'
-nameserver 223.5.5.5
-nameserver 8.8.8.8
-options timeout:2 attempts:2
-EOF
-        echo "✅ 已恢复 /etc/resolv.conf 为静态 DNS，避免 systemd-resolved 接管导致断网。"
+    echo "🛠️ 检测到 Debian 12 x86_64，按 Home Assistant Supervised 要求切换到 NetworkManager..."
+    if [ -z "$default_iface" ]; then
+        echo "❌ 未检测到默认路由网卡，无法自动迁移到 NetworkManager。"
+        record_error "Debian 12 x86 网络迁移失败：未检测到默认路由网卡，无法按 Home Assistant 要求切换到 NetworkManager。"
+        return 1
     fi
+    echo "ℹ️ 当前默认路由网卡：$default_iface"
+
+    if [ -d "/sys/class/net/$default_iface/wireless" ]; then
+        default_iface_type="wifi"
+    fi
+
+    if [ "$default_iface_type" != "ethernet" ]; then
+        echo "❌ 当前默认网卡 $default_iface 不是有线接口，脚本暂不自动迁移此类型网络。"
+        record_error "默认网卡 $default_iface 不是有线接口。Home Assistant Supervised 仍要求由 NetworkManager 管理该接口，请参考官方 supervised-installer 文档手动迁移后再继续。"
+        return 1
+    fi
+
+    ipv4_cidr=$(ip -4 -o addr show dev "$default_iface" scope global | awk '{print $4; exit}')
+    ipv4_gateway=$(ip route 2>/dev/null | awk -v iface="$default_iface" '$1=="default" && $5==iface {print $3; exit}')
+    current_dns=$(awk '/^nameserver[[:space:]]+/ {print $2}' /etc/resolv.conf 2>/dev/null | awk '$1 != "127.0.0.53" && $1 != "::1"' | paste -sd ';' -)
+    if [ -z "$current_dns" ]; then
+        current_dns="223.5.5.5;114.114.114.114;8.8.8.8"
+    fi
+
+    nm_connection_name="rk3318-${default_iface}"
+    nm_connection_file="/etc/NetworkManager/system-connections/${nm_connection_name}.nmconnection"
 
     backup_target "/etc/network/interfaces"
-    if [ -f /etc/network/interfaces ]; then
-        if ! grep -Eq '^\s*source\s+/etc/network/interfaces\.d/\*$' /etc/network/interfaces; then
-            echo 'source /etc/network/interfaces.d/*' | sudo tee -a /etc/network/interfaces > /dev/null
-        fi
+    sudo tee /etc/network/interfaces > /dev/null <<'EOF'
+source /etc/network/interfaces.d/*
+
+auto lo
+iface lo inet loopback
+EOF
+
+    if [ -d /etc/network/interfaces.d ]; then
+        while IFS= read -r iface_file; do
+            [ -n "$iface_file" ] || continue
+            if grep -Eq "^[[:space:]]*(auto|allow-hotplug)[[:space:]]+.*\b${default_iface}\b|^[[:space:]]*iface[[:space:]]+${default_iface}[[:space:]]+inet" "$iface_file"; then
+                backup_target "$iface_file"
+                sudo mv "$iface_file" "${iface_file}.rk3318-disabled"
+                moved_ifupdown_profile=true
+            fi
+        done < <(find /etc/network/interfaces.d -maxdepth 1 -type f 2>/dev/null | sort)
     fi
+
+    if $moved_ifupdown_profile; then
+        echo "✅ 已移除 $default_iface 的 ifupdown 配置，避免与 NetworkManager 争抢控制权。"
+    fi
+
+    backup_target "/etc/NetworkManager/conf.d/99-ifupdown-managed.conf"
+    sudo rm -f /etc/NetworkManager/conf.d/99-ifupdown-managed.conf
+    backup_target "/etc/NetworkManager/conf.d/90-rk3318-dns.conf"
+    sudo rm -f /etc/NetworkManager/conf.d/90-rk3318-dns.conf
+
+    backup_target "$nm_connection_file"
+    sudo mkdir -p /etc/NetworkManager/system-connections
+    if ip -4 addr show dev "$default_iface" 2>/dev/null | grep -q ' dynamic '; then
+        sudo tee "$nm_connection_file" > /dev/null <<EOF
+[connection]
+id=$nm_connection_name
+type=ethernet
+interface-name=$default_iface
+autoconnect=true
+
+[ethernet]
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+        echo "✅ 已为 $default_iface 生成 NetworkManager DHCP 配置。"
+    else
+        if [ -z "$ipv4_cidr" ] || [ -z "$ipv4_gateway" ]; then
+            echo "❌ 无法从 $default_iface 提取 IPv4 地址或网关，无法安全创建 NetworkManager 配置。"
+            record_error "默认网卡 $default_iface 未检测到完整的 IPv4/网关信息，无法自动生成 NetworkManager 配置。请参考 Home Assistant supervised-installer 文档手动迁移后再继续。"
+            return 1
+        fi
+        sudo tee "$nm_connection_file" > /dev/null <<EOF
+[connection]
+id=$nm_connection_name
+type=ethernet
+interface-name=$default_iface
+autoconnect=true
+
+[ethernet]
+
+[ipv4]
+method=manual
+address1=$ipv4_cidr,$ipv4_gateway
+dns=$current_dns;
+
+[ipv6]
+method=auto
+EOF
+        echo "✅ 已为 $default_iface 生成 NetworkManager 静态 IPv4 配置。"
+    fi
+    sudo chmod 600 "$nm_connection_file"
+    sudo chown root:root "$nm_connection_file"
+
+    sudo systemctl enable systemd-resolved >/dev/null 2>&1 || true
+    sudo systemctl restart systemd-resolved >/dev/null 2>&1 || true
+    sudo systemctl enable NetworkManager >/dev/null 2>&1 || true
+    sudo systemctl disable --now networking >/dev/null 2>&1 || true
+    sudo systemctl restart NetworkManager >/dev/null 2>&1 || true
+    sudo nmcli connection reload >/dev/null 2>&1 || true
+    sudo nmcli connection up "$nm_connection_name" >/dev/null 2>&1 || sudo nmcli device connect "$default_iface" >/dev/null 2>&1 || true
+
+    check_network
 }
 
 install_systemd_resolved() {
@@ -746,8 +844,8 @@ case "$RESTART_STEP" in
 
         sudo apt update
 
-        # 安装网络管理器
-        sudo apt install -y network-manager
+        # 按 Home Assistant Supervised 官方要求安装网络组件
+        sudo apt install -y network-manager systemd-resolved
 
         # 配置 NetworkManager
         if [ ! -s /etc/NetworkManager/conf.d/100-disable-wifi-mac-randomization.conf ]; then
@@ -761,15 +859,10 @@ wifi.scan-rand-mac-address=no
 EOF
         fi
 
-        if [ ! -s /etc/NetworkManager/conf.d/99-ifupdown-managed.conf ]; then
-            backup_target "/etc/NetworkManager/conf.d/99-ifupdown-managed.conf"
-            cat << EOF | sudo tee /etc/NetworkManager/conf.d/99-ifupdown-managed.conf
-[ifupdown]
-managed=false
-EOF
-        fi
-
-        repair_debian12_x86_network
+        repair_debian12_x86_network || {
+            echo "❌ Debian 12 x86 的 NetworkManager 迁移失败，停止安装，避免进入 Home Assistant 不支持的网络状态。"
+            exit 1
+        }
 
         # 安装必要软件包
         # 必要的软件包列表
@@ -803,10 +896,10 @@ EOF
             "lsb-release"
             "network-manager"
             "nfs-common"
+            "systemd-resolved"
             "systemd-journal-remote"
             "udisks2"
             "wget"
-            # "systemd-resolved"
         )
         install_and_check "${ADDITIONAL_PACKAGES[@]}"
         sudo apt-get --fix-broken install -y
@@ -819,11 +912,12 @@ EOF
             exit 1
         }
 
-        # 避免在 Debian 13 / x86 场景强制接管 DNS 导致断网
-        if systemctl list-unit-files | grep -q '^systemd-resolved.service'; then
-            echo "ℹ️ 检测到 systemd-resolved 服务，已避免强制启用；Debian 12 x86 将应用兼容修复。"
+        if systemctl is-active --quiet NetworkManager && systemctl is-active --quiet systemd-resolved; then
+            echo "ℹ️ Debian 12 x86 已按 Home Assistant Supervised 要求启用 NetworkManager 与 systemd-resolved。"
         else
-            echo "ℹ️ 系统未提供 systemd-resolved，跳过安装与启用，避免网络配置被改写。"
+            echo "❌ NetworkManager 或 systemd-resolved 未正常运行，安装已进入 Home Assistant 不支持状态。"
+            record_error "阶段 0 结束时，NetworkManager 或 systemd-resolved 未处于运行状态。请手动执行 systemctl status NetworkManager systemd-resolved 检查。"
+            exit 1
         fi
 
         check_network

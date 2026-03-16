@@ -119,7 +119,7 @@ Follow the staged installation steps below. After each stage, **reboot your syst
 
 - **Network behavior on x86 / Debian 12 (new)**:
 
-  Stage 0 now includes a Debian 12 x86 compatibility fix: if `systemd-resolved` previously took over `/etc/resolv.conf`, the script restores static DNS and keeps NetworkManager from taking over `ifupdown` interfaces, preventing post-install network loss.
+  Stage 0 no longer “preserves connectivity” by disabling `systemd-resolved` or keeping the default NIC under `ifupdown`. On Debian 12 x86, it now follows the Home Assistant Supervised expectation: migrate the active wired interface from `ifupdown` to `NetworkManager` and keep `systemd-resolved` enabled. This fixes the root cause of the earlier failure, where `ifupdown`, `NetworkManager`, and `systemd-resolved` were mixed together, leaving IP and routing intact while DNS broke.
   
 - **Access Home Assistant**:
 

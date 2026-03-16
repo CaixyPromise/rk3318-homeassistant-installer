@@ -121,7 +121,7 @@ ls
 
 - **x86 / Debian 12 网络处理（新增）**：
 
-  阶段 0 现在包含 Debian 12 x86 兼容修复：如果历史安装让 `systemd-resolved` 接管了 `/etc/resolv.conf`，脚本会自动恢复静态 DNS，并保持 NetworkManager 不接管 `ifupdown` 网卡，避免安装后断网。
+  阶段 0 现在不再通过禁用 `systemd-resolved` 或继续依赖 `ifupdown` 来“保底联网”。针对 Debian 12 x86，脚本会按 Home Assistant Supervised 官方要求，把默认有线网卡从 `ifupdown` 迁移到 `NetworkManager`，同时启用 `systemd-resolved`。这样修复的是根因：旧逻辑让 `ifupdown`、`NetworkManager`、`systemd-resolved` 同时参与网络控制，导致“IP 和默认路由都正常，但 DNS 失效”。
   
 - **访问 Home Assistant**：
 
